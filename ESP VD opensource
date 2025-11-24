@@ -1,0 +1,221 @@
+-- Надёжный ESP Highlight
+-- Видно сквозь стены (AlwaysOnTop)
+-- Меняет цвет на красный, если одежда отличается от профильной/оригинальной
+-- Возвращает цвет в нормальный, когда одежда возвращается
+-- Highlight восстанавливается, если кто-то его удаляет или персонаж пересоздаётся
+
+local Players = game:GetService("Players")
+local localPlayer = Players.LocalPlayer
+local workspace = game:GetService("Workspace")
+
+local highlights = {} -- [player] = record
+
+local NORMAL_COLOR = Color3.fromRGB(0, 170, 255)
+local ALERT_COLOR = Color3.fromRGB(255, 0, 0)
+local CHECK_INTERVAL = 5
+
+-- Получить Shirt/Pants ID из модели (Character или модель от GetCharacterAppearanceAsync)
+local function getClothingIdsFromModel(model)
+	if not model then
+		return "", ""
+	end
+	local shirtObj = model:FindFirstChildOfClass("Shirt")
+	local pantsObj = model:FindFirstChildOfClass("Pants")
+	local shirtId = ""
+	local pantsId = ""
+	if shirtObj and shirtObj:IsA("Shirt") then
+		shirtId = shirtObj.ShirtTemplate or ""
+	end
+	if pantsObj and pantsObj:IsA("Pants") then
+		pantsId = pantsObj.PantsTemplate or ""
+	end
+	return shirtId, pantsId
+end
+
+-- Создаёт/возвращает Highlight, гарантируя что он жив и прикреплён к текущему персонажу
+local function createOrEnsureHighlight(player)
+	local rec = highlights[player]
+	local character = player.Character
+	if not character then return nil end
+
+	-- Если есть highlight и он валидный — обновляем Adornee и возвращаем
+	if rec and rec.highlight and rec.highlight.Parent then
+		-- Обновляем Adornee в случае смены Character
+		if rec.highlight.Adornee ~= character then
+			rec.highlight.Adornee = character
+		end
+		return rec.highlight
+	end
+
+	-- Иначе — создаём новый highlight. Parent ставим в workspace, Adornee = character.
+	local highlight = Instance.new("Highlight")
+	highlight.Name = "ESP_Highlight"
+	highlight.Adornee = character
+	highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+	highlight.FillColor = NORMAL_COLOR
+	highlight.OutlineColor = NORMAL_COLOR
+	highlight.FillTransparency = 0.6
+	highlight.OutlineTransparency = 0
+	highlight.Parent = workspace -- parent в workspace, чтобы highlight не удалялся случайно вместе с моделью
+	-- Обновляем/создаём запись
+	if not rec then
+		rec = {
+			highlight = highlight,
+			originalShirt = nil,
+			originalPants = nil
+		}
+		highlights[player] = rec
+	else
+		rec.highlight = highlight
+	end
+
+	return highlight
+end
+
+-- Проверка одежды игрока: сравнивает текущую одежду с original (record.originalShirt/originalPants)
+local function checkClothing(player)
+	local rec = highlights[player]
+	if not rec then return end
+	local char = player.Character
+	if not char then return end
+
+	-- Убедимся, что highlight существует и привязан к текущему персонажу
+	local highlight = createOrEnsureHighlight(player)
+	if not highlight then return end
+
+	-- Получаем текущую одежду
+	local curShirt, curPants = getClothingIdsFromModel(char)
+
+	-- Если original ещё не определён — ничего не предполагаем и не выходим,
+	-- а лучше оставить попытку заполнить original (см. enableESP)
+	if rec.originalShirt == nil or rec.originalPants == nil then
+		-- если оригиналы ещё не установлены — пропускаем сравнение
+		return
+	end
+
+	local shirtChanged = (curShirt ~= rec.originalShirt)
+	local pantsChanged = (curPants ~= rec.originalPants)
+
+	if shirtChanged or pantsChanged then
+		highlight.FillColor = ALERT_COLOR
+		highlight.OutlineColor = ALERT_COLOR
+	else
+		highlight.FillColor = NORMAL_COLOR
+		highlight.OutlineColor = NORMAL_COLOR
+	end
+end
+
+-- Попытка получить профильную (оригинальную) внешность игрока.
+-- Если не удалось — используем текущую одежду как оригинал.
+local function tryFetchOriginalAppearance(player)
+	local rec = highlights[player]
+	if not rec then return end
+
+	-- защищённый вызов сетевого метода
+	local success, appearanceModel = pcall(function()
+		return Players:GetCharacterAppearanceAsync(player.UserId)
+	end)
+
+	if success and appearanceModel then
+		local origShirt, origPants = getClothingIdsFromModel(appearanceModel)
+		-- Если в профиле ничего нет — fallback к текущей
+		if origShirt == "" and origPants == "" then
+			local curShirt, curPants = getClothingIdsFromModel(player.Character)
+			rec.originalShirt = curShirt
+			rec.originalPants = curPants
+		else
+			rec.originalShirt = origShirt
+			rec.originalPants = origPants
+		end
+	else
+		-- fallback
+		local curShirt, curPants = getClothingIdsFromModel(player.Character)
+		rec.originalShirt = curShirt
+		rec.originalPants = curPants
+	end
+end
+
+-- Включение ESP для игрока
+local function enableESP(player)
+	if player == localPlayer then return end
+	if highlights[player] then
+		-- если запись уже есть — всё равно убедимся, что highlight привязан
+		createOrEnsureHighlight(player)
+		-- и постараемся получить оригинал (если ещё не получён)
+		if highlights[player].originalShirt == nil or highlights[player].originalPants == nil then
+			task.spawn(function()
+				tryFetchOriginalAppearance(player)
+				-- немедленная проверка после установки оригиналов
+				checkClothing(player)
+			end)
+		end
+		return
+	end
+
+	-- если персонажа нет сейчас — будем ждать CharacterAdded обработчиком
+	if not player.Character then
+		highlights[player] = { highlight = nil, originalShirt = nil, originalPants = nil }
+		return
+	end
+
+	-- создаём highlight и пытаемся получить оригинал
+	createOrEnsureHighlight(player)
+	task.spawn(function()
+		tryFetchOriginalAppearance(player)
+		checkClothing(player) -- сразу после получения оригиналов — проверить и выставить цвет
+	end)
+
+	-- старт периодического цикла, который:
+	-- 1) проверяет одежду (переход цвета)
+	-- 2) восстанавливает highlight, если он удалён
+	task.spawn(function()
+		while player and player.Parent do
+			-- Если персонажа нет — ждём
+			if player.Character then
+				-- Убедимся, что highlight существует и привязан
+				createOrEnsureHighlight(player)
+				-- Проверяем одежду и цвет
+				checkClothing(player)
+			end
+			task.wait(CHECK_INTERVAL)
+		end
+	end)
+end
+
+-- Отключение ESP
+local function disableESP(player)
+	local rec = highlights[player]
+	if rec then
+		if rec.highlight and rec.highlight.Parent then
+			rec.highlight:Destroy()
+		end
+		highlights[player] = nil
+	end
+end
+
+-- Обработчики событий
+Players.PlayerAdded:Connect(function(player)
+	-- при появления персонажа — включаем ESP
+	player.CharacterAdded:Connect(function()
+		-- немного ждем, чтобы характер загрузил одежду
+		task.wait(0.1)
+		enableESP(player)
+	end)
+end)
+
+Players.PlayerRemoving:Connect(function(player)
+	disableESP(player)
+end)
+
+-- Для уже присутствующих игроков
+for _, player in ipairs(Players:GetPlayers()) do
+	if player ~= localPlayer then
+		-- если Character уже есть — включаем сразу
+		if player.Character then
+			enableESP(player)
+		else
+			-- иначе подготовим запись — CharacterAdded обработает
+			highlights[player] = { highlight = nil, originalShirt = nil, originalPants = nil }
+		end
+	end
+end
