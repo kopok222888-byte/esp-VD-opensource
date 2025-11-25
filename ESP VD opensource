@@ -219,3 +219,73 @@ for _, player in ipairs(Players:GetPlayers()) do
 		end
 	end
 end
+
+-- ESP только для моделей Generator
+
+local workspace = game:GetService("Workspace")
+
+local function createESP(model)
+	if model:FindFirstChild("ESP_Generator") then return end
+
+	local highlight = Instance.new("Highlight")
+	highlight.Name = "ESP_Generator"
+	highlight.Adornee = model
+	highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+	highlight.FillColor = Color3.fromRGB(255, 255, 0)
+	highlight.OutlineColor = Color3.fromRGB(255, 255, 0)
+	highlight.FillTransparency = 0.7
+	highlight.OutlineTransparency = 0
+	highlight.Parent = model
+end
+
+local function scan()
+	for _, obj in ipairs(workspace:GetDescendants()) do
+		if obj:IsA("Model") and obj.Name == "Generator" then
+			createESP(obj)
+		end
+	end
+end
+
+scan()
+
+workspace.DescendantAdded:Connect(function(desc)
+	if desc:IsA("Model") and desc.Name == "Generator" then
+		task.wait(0.1)
+		createESP(desc)
+	end
+end)
+
+-- ESP только для моделей Hook
+
+local workspace = game:GetService("Workspace")
+
+local function createESP(model)
+	if model:FindFirstChild("ESP_Hook") then return end
+
+	local highlight = Instance.new("Highlight")
+	highlight.Name = "ESP_Hook"
+	highlight.Adornee = model
+	highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+	highlight.FillColor = Color3.fromRGB(255, 0, 0)
+	highlight.OutlineColor = Color3.fromRGB(255, 0, 0)
+	highlight.FillTransparency = 0.65
+	highlight.OutlineTransparency = 0
+	highlight.Parent = model
+end
+
+local function scan()
+	for _, obj in ipairs(workspace:GetDescendants()) do
+		if obj:IsA("Model") and obj.Name == "Hook" then
+			createESP(obj)
+		end
+	end
+end
+
+scan()
+
+workspace.DescendantAdded:Connect(function(desc)
+	if desc:IsA("Model") and desc.Name == "Hook" then
+		task.wait(0.1)
+		createESP(desc)
+	end
+end)
